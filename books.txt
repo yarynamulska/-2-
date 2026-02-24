@@ -1,0 +1,12 @@
+J. R. R. Tolkien,The Hobbit,1937,310,591
+Ernest Hemingway,The Old Man and the Sea,1952,127,422
+Patricia Highsmith,Price of Salt,1952,304,510
+Jane Austen,Pride and Prejudice,1813,279,464
+Ray Bradbury,Fahrenheit 451,1953,194,548
+F. Scott Fitzgerald,The Great Gatsby,1925,180,422
+Kazuo Ishiguro,Klara and the Sun,2021,320,250
+Mary Shelley,Frankenstein,1818,280,506
+Aldous Huxley,Brave New World,1932,311,548
+J. D. Salinger,The Catcher in the Rye,1951,277,506
+C. S. Lewis,Lion-the Witch and the Wardrobe,1950,208,190
+Mark Twain,Adventures of Huckleberry Finn,1884,366,591
