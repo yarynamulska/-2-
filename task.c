@@ -2,17 +2,59 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define MIN_YEAR   1000
+#define MAX_YEAR   2025
+#define OUTPUT_FILE "books_result.txt"
 typedef struct Book {
-    char title[100];
-    char author[100];
-    int year;
-    int pages;
+    char  title[100];
+    char  author[100];
+    int   year;
+    int   pages;
     float price;
     struct Book* next;
 } Book;
-static Book* createBook(char* author, char* title, int year, int pages, float price) {
+static void TrimSpaces(char* s) {
+    if (!s) return;
+    int len = (int)strlen(s);
+    while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\n' ||
+        s[len - 1] == '\r' || s[len - 1] == '\t'))
+        s[--len] = '\0';
+    int start = 0;
+    while (s[start] == ' ' || s[start] == '\t') start++;
+    if (start > 0) memmove(s, s + start, len - start + 1);
+}
+static int ValidateBook(const char* author, const char* title,
+    int year, int pages, float price) {
+    if (!author || strlen(author) == 0) {
+        fprintf(stderr, "  [!] Помилка: порожнє поле 'author'.\n");
+        return 0;
+    }
+    if (!title || strlen(title) == 0) {
+        fprintf(stderr, "  [!] Помилка: порожнє поле 'title'.\n");
+        return 0;
+    }
+    if (year < MIN_YEAR || year > MAX_YEAR) {
+        fprintf(stderr, "  [!] Помилка: некоректний рік '%d' (очікується %d–%d).\n",
+            year, MIN_YEAR, MAX_YEAR);
+        return 0;
+    }
+    if (pages <= 0) {
+        fprintf(stderr, "  [!] Помилка: некоректна кількість сторінок '%d'.\n", pages);
+        return 0;
+    }
+    if (price <= 0.0f) {
+        fprintf(stderr, "  [!] Помилка: некоректна ціна '%.2f'.\n", price);
+        return 0;
+    }
+    return 1;
+}
+static Book* CreateBook(char* author, char* title,
+    int year, int pages, float price) {
     Book* b = (Book*)malloc(sizeof(Book));
-    if (!b) return NULL;
+    if (!b) {
+        fprintf(stderr, "  [!] Помилка: не вдалося виділити пам'ять.\n");
+        return NULL;
+    }
     strcpy(b->author, author);
     strcpy(b->title, title);
     b->year = year;
@@ -21,97 +63,144 @@ static Book* createBook(char* author, char* title, int year, int pages, float pr
     b->next = NULL;
     return b;
 }
-static int readFromFile(const char* filename, Book** pArr, int maxSize) {
+static void InsertSorted(Book** pHead, Book* pNew) {
+    if (*pHead == NULL || strcmp(pNew->title, (*pHead)->title) < 0) {
+        pNew->next = *pHead;
+        *pHead = pNew;
+        return;
+    }
+    Book* cur = *pHead;
+    while (cur->next && strcmp(cur->next->title, pNew->title) < 0)
+        cur = cur->next;
+    pNew->next = cur->next;
+    cur->next = pNew;
+}
+static void FreeList(Book** ppHead) {
+    while (*ppHead) {
+        Book* tmp = *ppHead;
+        *ppHead = (*ppHead)->next;
+        free(tmp);
+    }
+}
+static int ReadFromFile(const char* filename, Book** pHead) {
     FILE* f = fopen(filename, "r");
-    if (!f) return 0;
-
+    if (!f) {
+        fprintf(stderr, "[!] Помилка: файл '%s' не знайдено.\n", filename);
+        return 0;
+    }
+    fseek(f, 0, SEEK_END);
+    if (ftell(f) == 0) {
+        fprintf(stderr, "[!] Помилка: файл '%s' порожній.\n", filename);
+        fclose(f);
+        return 0;
+    }
+    rewind(f);
     char line[256];
-    int countBooks = 0;
-
-    while (fgets(line, sizeof(line), f) && countBooks < maxSize) {
+    int  bookCount = 0;
+    int  lineNumber = 0;
+    while (fgets(line, sizeof(line), f)) {
+        lineNumber++;
+        TrimSpaces(line);
+        if (strlen(line) == 0) continue;
         char* a = strtok(line, ",");
         char* t = strtok(NULL, ",");
         char* y = strtok(NULL, ",");
         char* pg = strtok(NULL, ",");
         char* pr = strtok(NULL, ",");
 
-        if (!a || !t || !y || !pg || !pr) continue;
-
-        int year = atoi(y);
-        int pages = atoi(pg);
+        if (!a || !t || !y || !pg || !pr) {
+            fprintf(stderr, "  [!] Рядок %d: недостатньо полів, пропускаємо.\n",
+                lineNumber);
+            continue;
+        }
+        TrimSpaces(a);  TrimSpaces(t);
+        TrimSpaces(y);  TrimSpaces(pg);  TrimSpaces(pr);
+        int   year = atoi(y);
+        int   pages = atoi(pg);
         float price = (float)atof(pr);
-
-        pArr[countBooks] = createBook(a, t, year, pages, price);
-        if (pArr[countBooks] != NULL) countBooks++;
+        if (!ValidateBook(a, t, year, pages, price)) {
+            fprintf(stderr, "  [!] Рядок %d: запис пропущено через помилку.\n",
+                lineNumber);
+            continue;
+        }
+        Book* b = CreateBook(a, t, year, pages, price);
+        if (b) {
+            InsertSorted(pHead, b);
+            bookCount++;
+        }
     }
 
     fclose(f);
-    return countBooks;
+    return bookCount;
 }
-static void insertSorted(Book** pHead, Book* pNew) {
-    if (*pHead == NULL || strcmp(pNew->title, (*pHead)->title) < 0) {
-        pNew->next = *pHead;
-        *pHead = pNew;
-        return;
+static int WriteToFile(const char* filename, Book* pHead) {
+    FILE* f = fopen(filename, "w");
+    if (!f) {
+        fprintf(stderr, "[!] Помилка: не вдалося відкрити '%s' для запису.\n",
+            filename);
+        return 0;
     }
-
-    Book* curNode = *pHead;
-    while (curNode->next && strcmp(curNode->next->title, pNew->title) < 0) {
-        curNode = curNode->next;
+    int written = 0;
+    while (pHead) {
+        fprintf(f, "%s,%s,%d,%d,%.2f\n",
+            pHead->author, pHead->title,
+            pHead->year, pHead->pages, pHead->price);
+        written++;
+        pHead = pHead->next;
     }
-    pNew->next = curNode->next;
-    curNode->next = pNew;
+    fclose(f);
+    printf("[i] Збережено %d записів у файл '%s'.\n", written, filename);
+    return 1;
 }
-
-static void printTable(Book* headPtr) {
+static void PrintTable(Book* head) {
     printf("------------------------------------------------------------------------------------------------------\n");
-    printf("| %-25s | %-25s | %-6s | %-7s | %-8s |\n", "Author", "Title", "Year", "Pages", "Price");
+    printf("| %-25s | %-25s | %-6s | %-7s | %-8s |\n",
+        "Author", "Title", "Year", "Pages", "Price");
     printf("------------------------------------------------------------------------------------------------------\n");
-    while (headPtr) {
+    if (!head) {
+        printf("| %-96s |\n", "  (список порожній)");
+    }
+    while (head) {
         printf("| %-25.25s | %-25.25s | %6d | %7d | %8.2f |\n",
-            headPtr->author, headPtr->title, headPtr->year, headPtr->pages, headPtr->price);
-        headPtr = headPtr->next;
+            head->author, head->title,
+            head->year, head->pages, head->price);
+        head = head->next;
     }
     printf("------------------------------------------------------------------------------------------------------\n");
 }
-
-static float avgPrice(Book* pList) {
-    int n = 0;
+static float AvgPrice(Book* pList) {
+    int   n = 0;
     float sum = 0.0f;
-    while (pList) {
-        sum += pList->price;
-        n++;
-        pList = pList->next;
-    }
-    if (n == 0) return 0.0f;
-    return sum / n;
+    while (pList) { sum += pList->price; n++; pList = pList->next; }
+    return (n == 0) ? 0.0f : sum / n;
 }
-
-// Створює НОВИЙ список книг з price > avg (копії вузлів)
-static Book* filterAboveAvg(Book* src, float avg) {
-    Book* resultList = NULL;
+static Book* FilterAboveAvg(Book* src, float avg) {
+    Book* filteredList = NULL;
     while (src) {
         if (src->price > avg) {
-            Book* copyNode = createBook(src->author, src->title, src->year, src->pages, src->price);
-            if (copyNode) insertSorted(&resultList, copyNode);
+            Book* copy = CreateBook(src->author, src->title,
+                src->year, src->pages, src->price);
+            if (copy) InsertSorted(&filteredList, copy);
         }
         src = src->next;
     }
-    return resultList;
+    return filteredList;
 }
-
-static void deletePKL(Book** Head) {
-    char bad[] = "PKLpk l";
-    while (*Head && strchr(bad, (*Head)->title[0])) {
-        Book* tmp = *Head;
-        *Head = (*Head)->next;
+static int StartsWithPKL(const char* title) {
+    char c = title[0];
+    return (c == 'П' || c == 'п' || c == 'К' || c == 'к' || c == 'Л' || c == 'л' ||
+        c == 'P' || c == 'p' || c == 'K' || c == 'k' || c == 'L' || c == 'l');
+}
+static void DeletePKL(Book** pHead) {
+    while (*pHead && StartsWithPKL((*pHead)->title)) {
+        Book* tmp = *pHead;
+        *pHead = (*pHead)->next;
         free(tmp);
     }
-    if (!*Head) return;
-
-    Book* p = *Head;
+    if (!*pHead) return;
+    Book* p = *pHead;
     while (p->next) {
-        if (strchr(bad, p->next->title[0])) {
+        if (StartsWithPKL(p->next->title)) {
             Book* tmp = p->next;
             p->next = tmp->next;
             free(tmp);
@@ -121,47 +210,31 @@ static void deletePKL(Book** Head) {
         }
     }
 }
-
-static void freeList(Book** ppHead) {
-    while (*ppHead) {
-        Book* tmp = *ppHead;
-        *ppHead = (*ppHead)->next;
-        free(tmp);
-    }
-}
 int main(void) {
-    Book* bookArr[200];
     Book* listBooks = NULL;
-
-    int N = readFromFile("books.txt", bookArr, 200);
+    Book* filteredList = NULL;
+    int N = ReadFromFile("books.txt", &listBooks);
     if (N == 0) {
-        printf("Error reading file.\n");
+        printf("Програма завершена: немає даних для обробки.\n");
         return 1;
     }
-
-    printf("================================= Books from file ================================\n");
-    for (int iCounter = 0; iCounter < N; iCounter++) {
-        bookArr[iCounter]->next = NULL;
-        insertSorted(&listBooks, bookArr[iCounter]);
-    }
-    printTable(listBooks);
-
-    float average_price = avgPrice(listBooks);
-    printf("Average price = %.2f\n", average_price);
-    Book* sortedAboveAvg = filterAboveAvg(listBooks, average_price);
-
-    printf("================================== Sorted list ==================================\n");
-    printTable(sortedAboveAvg);
-
-    printf("================================Inserting new book================================\n");
-    Book* pNewBook = createBook("Victor Hugo", "Les Miserables", 1862, 1488, 420.0f);
-    insertSorted(&sortedAboveAvg, pNewBook);
-    printTable(sortedAboveAvg);
-
-    printf("=======================Deleting books starting with P, K, L=======================\n");
-    deletePKL(&sortedAboveAvg);
-    printTable(sortedAboveAvg);
-    freeList(&sortedAboveAvg);
-
+    printf("[i] Прочитано %d книг з файлу.\n\n", N);
+    printf("================================= Books from file =================================\n");
+    PrintTable(listBooks);
+    float avgPriceVal = AvgPrice(listBooks);
+    printf("Average price = %.2f\n\n", avgPriceVal);
+    filteredList = FilterAboveAvg(listBooks, avgPriceVal);
+    printf("================================== Sorted list ====================================\n");
+    PrintTable(filteredList);
+    printf("================================ Inserting new book ===============================\n");
+    Book* pNewBook = CreateBook("Victor Hugo", "Les Miserables", 1862, 1488, 420.0f);
+    if (pNewBook) InsertSorted(&filteredList, pNewBook);
+    PrintTable(filteredList);
+    printf("==================== Deleting books starting with П, К, Л ========================\n");
+    DeletePKL(&filteredList);
+    PrintTable(filteredList);
+    WriteToFile(OUTPUT_FILE, filteredList);
+    FreeList(&filteredList);
+    FreeList(&listBooks);
     return 0;
 }
